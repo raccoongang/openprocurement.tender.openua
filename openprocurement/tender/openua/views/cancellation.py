@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-from openprocurement.api.utils import raise_operation_error
+from openprocurement.api.utils import json_view
 from openprocurement.tender.core.utils import optendersresource
 from openprocurement.tender.belowthreshold.views.cancellation import TenderCancellationResource
+from openprocurement.tender.core.validation import (
+    validate_cancellation_data, validate_cancellation_status,
+    validate_patch_cancellation_data
+)
 from openprocurement.tender.openua.utils import add_next_award
+from openprocurement.tender.openua.validation import validate_cancellation
 
 
 @optendersresource(name='aboveThresholdUA:Tender Cancellations',
@@ -12,17 +17,15 @@ from openprocurement.tender.openua.utils import add_next_award
                    description="Tender cancellations")
 class TenderUaCancellationResource(TenderCancellationResource):
 
-    def cancel_lot(self, cancellation=None):
-        if not cancellation:
-            cancellation = self.context
+    def cancel_lot(self, cancellation):
         tender = self.request.validated['tender']
         [setattr(i, 'status', 'cancelled') for i in tender.lots if i.id == cancellation.relatedLot]
         statuses = set([lot.status for lot in tender.lots])
-        if statuses == set(['cancelled']):
+        if statuses == {'cancelled'}:
             self.cancel_tender()
-        elif not statuses.difference(set(['unsuccessful', 'cancelled'])):
+        elif not statuses.difference({'unsuccessful', 'cancelled'}):
             tender.status = 'unsuccessful'
-        elif not statuses.difference(set(['complete', 'unsuccessful', 'cancelled'])):
+        elif not statuses.difference({'complete', 'unsuccessful', 'cancelled'}):
             tender.status = 'complete'
         if tender.status == 'active.auction' and all([
             i.auctionPeriod and i.auctionPeriod.endDate
@@ -30,24 +33,18 @@ class TenderUaCancellationResource(TenderCancellationResource):
             if i.status == 'active'
         ]):
             configurator = self.request.content_configurator
-            add_next_award(self.request, reverse=configurator.reverse_awarding_criteria, awarding_criteria_key=configurator.awarding_criteria_key)
+            add_next_award(self.request,
+                           reverse=configurator.reverse_awarding_criteria,
+                           awarding_criteria_key=configurator.awarding_criteria_key)
 
-    def validate_cancellation(self, operation):
-        """ TODO move validators
-        This class is inherited from below package, but validate_cancellation function has different validators.
-        For now, we have no way to use different validators on methods according to procedure type.
-        """
-        if not super(TenderUaCancellationResource, self).validate_cancellation(operation):
-            return
-        tender = self.request.validated['tender']
-        cancellation = self.request.validated['cancellation']
-        if not cancellation.relatedLot and tender.lots:
-            active_lots = [i.id for i in tender.lots if i.status == 'active']
-            statuses = [set([i.status for i in tender.awards if i.lotID == lot_id]) for lot_id in active_lots]
-            block_cancellation = any([not i.difference(set(['unsuccessful', 'cancelled'])) if i else False for i in statuses])
-        elif cancellation.relatedLot and tender.lots or not cancellation.relatedLot and not tender.lots:
-            statuses = set([i.status for i in tender.awards if i.lotID == cancellation.relatedLot])
-            block_cancellation = not statuses.difference(set(['unsuccessful', 'cancelled'])) if statuses else False
-        if block_cancellation:
-            raise_operation_error(self.request, 'Can\'t {} cancellation if all awards is unsuccessful'.format(operation))
-        return True
+    @json_view(content_type="application/json",
+               validators=(validate_cancellation_data, validate_cancellation_status, validate_cancellation),
+               permission='edit_tender')
+    def collection_post(self):
+        return super(TenderUaCancellationResource, self).collection_post()
+
+    @json_view(content_type="application/json",
+               validators=(validate_patch_cancellation_data, validate_cancellation_status, validate_cancellation),
+               permission='edit_tender')
+    def patch(self):
+        return super(TenderUaCancellationResource, self).patch()
