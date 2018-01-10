@@ -1,6 +1,6 @@
 from openprocurement.api.validation import validate_data, validate_json_data, OPERATIONS
 from openprocurement.api.utils import apply_data_patch, error_handler, get_now, raise_operation_error
-from openprocurement.tender.core.utils import calculate_business_date, get_operation_type
+from openprocurement.tender.core.utils import calculate_business_date
 
 
 def validate_patch_tender_ua_data(request):
@@ -82,4 +82,4 @@ def validate_cancellation(request):
         block_cancellation = False
     if block_cancellation:
         raise_operation_error(request, 'Can\'t {} cancellation if all awards is unsuccessful'.format(
-            get_operation_type(request)))
+            OPERATIONS.get(request.method)))
